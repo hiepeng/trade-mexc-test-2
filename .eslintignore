@@ -1,0 +1,7 @@
+node_modules/
+*.min.js
+.env
+.env.local
+dist/
+build/
+

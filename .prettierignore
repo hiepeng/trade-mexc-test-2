@@ -1,0 +1,9 @@
+node_modules/
+*.min.js
+.env
+.env.local
+dist/
+build/
+package-lock.json
+yarn.lock
+
