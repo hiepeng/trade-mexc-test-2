@@ -23,7 +23,6 @@ export const config = {
 
   // API Endpoints
   futuresBaseUrl: process.env.FUTURES_BASE_URL || 'https://contract.mexc.com', // Futures API base URL - For trading operations (long/short) and market data
-  wsFuturesUrl: process.env.WS_FUTURES_URL || 'wss://contract.mexc.com/ws', // WebSocket URL for Futures - Real-time market data stream
 
   // Trading Parameters
   recvWindow: numberFromEnv('RECV_WINDOW', 5000), // Request timeout window in milliseconds - Handles clock skew between client and server
