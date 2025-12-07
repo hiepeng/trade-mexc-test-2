@@ -90,7 +90,7 @@ export const fetchSpotSeries = async ({ symbol, interval, limit }) => {
   return toSeries(data);
 };
 
-export const fetchFuturesSeries = async ({ symbol, interval, limit }) => {
+export const fetchFuturesSeries = async ({ symbol, interval, limit, proxy = null }) => {
   // MEXC Futures kline API supports both start/end and limit parameters
   // For getting last N candles, we can use limit directly if API supports it
   // Otherwise, calculate start/end from limit to ensure we get exactly N candles
@@ -133,7 +133,8 @@ export const fetchFuturesSeries = async ({ symbol, interval, limit }) => {
     interval, 
     limit: null, // Use start/end instead of limit to ensure exact number of candles
     startTime,
-    endTime
+    endTime,
+    proxy // Pass proxy to getFuturesKlines
   });
   
   // Handle MEXC Futures kline response format

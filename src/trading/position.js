@@ -157,11 +157,19 @@ export const getOpenPositionsBySymbol = async () => {
           // Update highest/lowest price for trailing stop tracking
           if (position.side === 'LONG') {
             if (currentPrice > position.highestPrice) {
+              const oldHighest = position.highestPrice;
               position.highestPrice = currentPrice;
+              console.log(
+                `[${symbol}] 🔼 LONG: New highest price $${currentPrice.toFixed(6)} (was $${oldHighest.toFixed(6)})`
+              );
             }
           } else if (position.side === 'SHORT') {
             if (currentPrice < position.lowestPrice) {
+              const oldLowest = position.lowestPrice;
               position.lowestPrice = currentPrice;
+              console.log(
+                `[${symbol}] 🔽 SHORT: New lowest price $${currentPrice.toFixed(6)} (was $${oldLowest.toFixed(6)})`
+              );
             }
           }
           
@@ -185,6 +193,7 @@ export const getOpenPositionsBySymbol = async () => {
           
           // Calculate trailing stop price
           const signal = position.side === 'LONG' ? SIGNAL.LONG : SIGNAL.SHORT;
+          const oldTrailingStop = position.trailingStopPrice;
           const newTrailingStop = calculateTrailingStop({
             currentPrice,
             signal,
@@ -195,6 +204,15 @@ export const getOpenPositionsBySymbol = async () => {
           // Update trailing stop price if new high/low reached
           if (newTrailingStop !== null) {
             position.trailingStopPrice = newTrailingStop;
+            const distancePct = position.side === 'LONG'
+              ? ((position.highestPrice - newTrailingStop) / position.highestPrice * 100).toFixed(2)
+              : ((newTrailingStop - position.lowestPrice) / position.lowestPrice * 100).toFixed(2);
+            console.log(
+              `[${symbol}] 📍 Trailing Stop updated: $${newTrailingStop.toFixed(6)} ` +
+              `(${oldTrailingStop ? `was $${oldTrailingStop.toFixed(6)}, ` : ''}` +
+              `distance: ${distancePct}%, ` +
+              `${position.side === 'LONG' ? `highest: $${position.highestPrice.toFixed(6)}` : `lowest: $${position.lowestPrice.toFixed(6)}`})`
+            );
           }
         } catch (err) {
           console.error(`Error calculating PnL for ${symbol}:`, err?.message || err);
@@ -260,6 +278,11 @@ export const calculateTrailingStop = ({ currentPrice, signal, highestPrice, lowe
     if (currentPrice > highestPrice) {
       // Price is at new high, update trailing stop
       const trailingStop = currentPrice * (1 - config.trailingStopPct);
+      const distance = ((currentPrice - trailingStop) / currentPrice * 100).toFixed(2);
+      console.log(
+        `[TRAILING] LONG: New high $${currentPrice.toFixed(6)} > highest $${highestPrice.toFixed(6)}, ` +
+        `calculating trailing stop: $${trailingStop.toFixed(6)} (${distance}% distance, TRAILING_STOP_PCT=${config.trailingStopPct})`
+      );
       return Number(trailingStop.toFixed(6));
     }
     // Return null if price hasn't reached new high (keep existing stop)
@@ -271,6 +294,11 @@ export const calculateTrailingStop = ({ currentPrice, signal, highestPrice, lowe
     if (currentPrice < lowestPrice) {
       // Price is at new low, update trailing stop
       const trailingStop = currentPrice * (1 + config.trailingStopPct);
+      const distance = ((trailingStop - currentPrice) / currentPrice * 100).toFixed(2);
+      console.log(
+        `[TRAILING] SHORT: New low $${currentPrice.toFixed(6)} < lowest $${lowestPrice.toFixed(6)}, ` +
+        `calculating trailing stop: $${trailingStop.toFixed(6)} (${distance}% distance, TRAILING_STOP_PCT=${config.trailingStopPct})`
+      );
       return Number(trailingStop.toFixed(6));
     }
     // Return null if price hasn't reached new low (keep existing stop)
@@ -326,25 +354,63 @@ export const manageOpenPositions = async (symbolSignals) => {
       const currentPrice = currentSignal.price;
       let shouldCloseTrailingStop = false;
       
-      console.log(position, "position");
+      // Debug log for trailing stop check
+      if (config.trailingStopPct) {
+        if (position.trailingStopPrice !== null) {
+          const distanceFromStop = position.side === 'LONG'
+            ? ((currentPrice - position.trailingStopPrice) / position.trailingStopPrice * 100).toFixed(2)
+            : ((position.trailingStopPrice - currentPrice) / position.trailingStopPrice * 100).toFixed(2);
+          const distanceFromHighLow = position.side === 'LONG'
+            ? ((position.highestPrice - currentPrice) / position.highestPrice * 100).toFixed(2)
+            : ((currentPrice - position.lowestPrice) / position.lowestPrice * 100).toFixed(2);
+          
+          console.log(
+            `[${symbol}] 🔍 Trailing Stop Check (${position.side}): ` +
+            `Current: $${currentPrice.toFixed(6)}, ` +
+            `Trailing Stop: $${position.trailingStopPrice.toFixed(6)}, ` +
+            `${position.side === 'LONG' ? `Highest: $${position.highestPrice.toFixed(6)}` : `Lowest: $${position.lowestPrice.toFixed(6)}`}, ` +
+            `Distance from stop: ${distanceFromStop}%, ` +
+            `Distance from ${position.side === 'LONG' ? 'high' : 'low'}: ${distanceFromHighLow}%`
+          );
+        } else {
+          console.log(
+            `[${symbol}] ⚠️ Trailing Stop not set yet (${position.side}): ` +
+            `Current: $${currentPrice.toFixed(6)}, ` +
+            `${position.side === 'LONG' ? `Highest: $${position.highestPrice.toFixed(6)}` : `Lowest: $${position.lowestPrice.toFixed(6)}`}, ` +
+            `TRAILING_STOP_PCT: ${config.trailingStopPct}`
+          );
+        }
+      }
 
       if (config.trailingStopPct && position.trailingStopPrice !== null) {
         if (position.side === 'LONG') {
           // LONG: Close if price drops below trailing stop
           if (currentPrice <= position.trailingStopPrice) {
             shouldCloseTrailingStop = true;
+            const dropPct = ((position.highestPrice - currentPrice) / position.highestPrice * 100).toFixed(2);
+            console.log(
+              `[${symbol}] 🚨 LONG Trailing Stop TRIGGERED: ` +
+              `Current $${currentPrice.toFixed(6)} <= Stop $${position.trailingStopPrice.toFixed(6)} ` +
+              `(dropped ${dropPct}% from high $${position.highestPrice.toFixed(6)})`
+            );
           }
         } else if (position.side === 'SHORT') {
           // SHORT: Close if price rises above trailing stop
           if (currentPrice >= position.trailingStopPrice) {
             shouldCloseTrailingStop = true;
+            const risePct = ((currentPrice - position.lowestPrice) / position.lowestPrice * 100).toFixed(2);
+            console.log(
+              `[${symbol}] 🚨 SHORT Trailing Stop TRIGGERED: ` +
+              `Current $${currentPrice.toFixed(6)} >= Stop $${position.trailingStopPrice.toFixed(6)} ` +
+              `(rose ${risePct}% from low $${position.lowestPrice.toFixed(6)})`
+            );
           }
         }
       }
       
       if (shouldCloseTrailingStop) {
         console.log(
-          `[${symbol}] Trailing Stop triggered: Current Price $${currentPrice.toFixed(6)}, Trailing Stop $${position.trailingStopPrice.toFixed(6)}`
+          `[${symbol}] ✅ Trailing Stop CLOSING: Current Price $${currentPrice.toFixed(6)}, Trailing Stop $${position.trailingStopPrice.toFixed(6)}, ROI: ${position.roi.toFixed(2)}%`
         );
         
         const resClose = await closePosition({

@@ -105,7 +105,7 @@ const mapIntervalToMEXCFutures = (interval) => {
   return mapping[interval] || interval;
 };
 
-export const getFuturesKlines = async ({ symbol, interval = '1m', limit, startTime, endTime }) => {
+export const getFuturesKlines = async ({ symbol, interval = '1m', limit, startTime, endTime, proxy = null }) => {
   try {
     // Convert interval from config format (1m) to MEXC API format (Min1) for kline endpoint
     const mexcInterval = mapIntervalToMEXCFutures(interval);
@@ -143,15 +143,16 @@ export const getFuturesKlines = async ({ symbol, interval = '1m', limit, startTi
     
     let data
 
-    const requestAndRetry = async (maxRetry = 10) => {
+    const requestAndRetry = async (maxRetry = 100) => {
       data = await publicRequest({
         baseUrl: config.futuresBaseUrl,
         path,
-        params
+        params,
+        proxy // Pass proxy to publicRequest
       });
       if (!data.success || !data.data || !data.data.time || !data.data.time.length) {
         if (maxRetry > 0) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 1000));
           return requestAndRetry(maxRetry - 1);
         }
       }

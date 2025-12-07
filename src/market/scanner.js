@@ -76,11 +76,11 @@ export const scanMarkets = async () => {
         lastPrice
       };
     })
-    // .filter(
-    //   (c) =>
-    //     c.volumeUsd >= config.strategy.minVolumeUsd && c.volumeUsd <= config.strategy.maxVolumeUsd
-    // )
-    .filter(c => c.symbol === 'BTC_USDT')
+    .filter(
+      (c) =>
+        c.volumeUsd >= config.strategy.minVolumeUsd && c.volumeUsd <= config.strategy.maxVolumeUsd
+    )
+    // .filter(c => c.symbol === 'BTC_USDT')
     .sort((a, b) => b.volumeUsd - a.volumeUsd);
   return response;
 };

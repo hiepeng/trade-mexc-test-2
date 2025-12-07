@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fetch from 'node-fetch';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { config } from '../config.js';
 
 // Build query string for GET/DELETE requests
@@ -90,6 +92,7 @@ export const signedRequest = async ({
     requestInit.body = JSON.stringify(body);
   }
   // console.log(requestInit, "request")
+  // Use node-fetch for consistency (signed requests typically don't need proxy)
   const res = await fetch(url, requestInit);
   const text = await res.text();
   let data;
@@ -107,19 +110,97 @@ export const signedRequest = async ({
   return data;
 };
 
-export const publicRequest = async ({ baseUrl, path, params = {}, method = 'GET' }) => {
+let maxRetry = 0;
+
+export const publicRequest = async ({ baseUrl, path, params = {}, method = 'GET', proxy = null }) => {
   const query = buildQueryString(params);
   const url = query ? `${baseUrl}${path}?${query}` : `${baseUrl}${path}`;
-  const res = await fetch(url, { method });
-  const text = await res.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Failed to parse JSON: ${text}`);
+  
+  const TIMEOUT_MS = 5000; // 5 seconds timeout
+  const MAX_RETRIES = 100;
+  
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    let timeoutId = null;
+    try {
+      // Build fetch options with proxy support
+      const fetchOptions = { method };
+      
+      // If proxy is provided, use HttpsProxyAgent with node-fetch
+      if (proxy && proxy.url) {
+        const agent = new HttpsProxyAgent(proxy.url);
+        fetchOptions.agent = agent;
+      }
+      
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => {
+        controller.abort();
+      }, TIMEOUT_MS);
+      
+      fetchOptions.signal = controller.signal;
+      
+      // Use node-fetch (supports proxy via agent option)
+      const res = await fetch(url, fetchOptions);
+      
+      // Clear timeout if request completed successfully
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      
+      const text = await res.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Failed to parse JSON: ${text}`);
+      }
+      
+      if (!res.ok) {
+        throw new Error(`MEXC public API error ${res.status}: ${text}`);
+      }
+      
+      // Success: return data
+      return data;
+    } catch (err) {
+      // Clear timeout if it's still active
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      
+      lastError = err;
+      
+      // Check if it's a timeout/abort error
+      const isTimeout = err.name === 'AbortError' || 
+                       err.message?.includes('aborted') || 
+                       err.message?.includes('timeout') ||
+                       err.code === 'ECONNRESET' ||
+                       err.code === 'ETIMEDOUT';
+      
+      if (isTimeout) {
+        if (attempt > maxRetry) {
+          maxRetry = attempt;
+          console.log(proxy.url)
+          console.log(maxRetry, "maxRetry")
+        }
+        // console.log(`[publicRequest] Request timeout (attempt ${attempt}/${MAX_RETRIES}): ${url}`);
+      } else {
+        console.log(`[publicRequest] Request error (attempt ${attempt}/${MAX_RETRIES}): ${err.message}`);
+      }
+      
+      // If this is the last attempt, throw the error
+      if (attempt === MAX_RETRIES) {
+        throw new Error(`Request failed after ${MAX_RETRIES} attempts: ${lastError.message}`);
+      }
+      
+      const delay = Math.min(100 * attempt, 100);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
-  if (!res.ok) {
-    throw new Error(`MEXC public API error ${res.status}: ${text}`);
-  }
-  return data;
+  
+  // Should never reach here, but just in case
+  throw new Error(`Request failed after ${MAX_RETRIES} attempts: ${lastError?.message || 'Unknown error'}`);
 };

@@ -8,6 +8,9 @@ import { computeStops } from './trading/risk.js';
 import { submitOrder } from './trading/order.js';
 import { telegram } from './notifications/telegram.js';
 import { manageOpenPositions, getOpenPositionsBySymbol } from './trading/position.js';
+import { parseProxies } from './helper.js';
+
+const proxies = parseProxies();
 
 const pickSignal = (tech, brk) => {
   const candidates = [tech, brk].filter((c) => c.signal && c.signal !== SIGNAL.FLAT);
@@ -18,13 +21,14 @@ const pickSignal = (tech, brk) => {
 };
 
 // Calculate signal for a symbol (reusable function to avoid duplication)
-const calculateSignal = async (symbol) => {
+const calculateSignal = async (symbol, proxy = null) => {
   try {
     // Fetch kline data: uses config.klines.limit (default: 200 candles)
     const series = await fetchFuturesSeries({
       symbol,
       interval: config.klines.intervals[0], // First interval from config (default: '1m')
-      limit: config.klines.limit // Number of candles from config (default: 200)
+      limit: config.klines.limit, // Number of candles from config (default: 200)
+      proxy // Pass proxy for this request
     });
     const indicators = computeIndicators(series);
     const tech = evaluateTechnical({ indicators });
@@ -50,10 +54,11 @@ const tradeSymbol = async (symbol, signalData = null) => {
   let signalResult = signalData;
   if (!signalResult) {
     signalResult = await calculateSignal(symbol);
-    console.log(signalResult)
     if (!signalResult) {
       return { symbol, action: 'SKIP', reason: 'Failed to calculate signal' };
     }
+  } else {
+    // console.log("tradeSymbol not calculate")
   }
 
   const chosen = {
@@ -63,16 +68,17 @@ const tradeSymbol = async (symbol, signalData = null) => {
   };
 
   if (chosen.signal !== SIGNAL.FLAT) {
+    console.log(chosen, "chosen")
     await telegram.sendMessage(`${symbol} ${chosen.signal} ${chosen.confidence} ${chosen.reason}`)
   }
 
   // testing auto comment
-  // if (chosen.signal === SIGNAL.FLAT || (chosen.confidence || 0) < 0.55) {
-  //   if (chosen.confidence && chosen.confidence < 0.55) {
-  //     await telegram.sendMessage(`${symbol} ${chosen.signal} ${chosen.confidence} ${chosen.reason || 'Low confidence'}`)
-  //   }
-  //   return { symbol, action: 'SKIP', reason: chosen.reason || 'Low confidence' };
-  // }
+  if (chosen.signal === SIGNAL.FLAT || (chosen.confidence || 0) < 0.55) {
+    if (chosen.confidence && chosen.confidence < 0.55) {
+      await telegram.sendMessage(`${symbol} ${chosen.signal} ${chosen.confidence} ${chosen.reason || 'Low confidence'}`)
+    }
+    return { symbol, action: 'SKIP', reason: chosen.reason || 'Low confidence' };
+  }
 
   // Use provided positions Map or fetch if not provided
   const existingPositions = await getOpenPositionsBySymbol();
@@ -140,25 +146,30 @@ console.log(orderPayload, "orderPayload")
 export const runBot = async () => {
   // simple loop; in production use scheduler/queue.
   const loop = async () => {
+    const loopStart = Date.now(); // Track loop start time
     try {
       // Step 1: Manage existing positions (check reverse signals, trailing stop, break even)
       const markets = await scanMarkets();
       console.log("length markets", markets.length)
-      const top = markets.slice(0, 1);
-      console.log(top, "top")
-      // const top = markets
+      // const top = markets.slice(0, 1);
+      // console.log(top, "top")
+      const top = markets
       // Collect signals for all symbols we're tracking (process in batches of 10)
       const symbolSignals = new Map();
-      const batchSize = 10;
+      const batchSize = 100;
       
+      const startScan = Date.now()
+
       for (let i = 0; i < top.length; i += batchSize) {
         const batch = top.slice(i, i + batchSize);
         
-        // Process batch in parallel
+        // Process batch in parallel with proxy distribution
         const batchResults = await Promise.all(
-          batch.map(async (m) => {
+          batch.map(async (m, index) => {
             try {
-              const signalResult = await calculateSignal(m.symbol);
+              // Distribute proxies across batch requests (round-robin)
+              const proxy = proxies.length > 0 ? proxies[index % proxies.length] : null;
+              const signalResult = await calculateSignal(m.symbol, proxy);
               if (signalResult) {
                 return {
                   symbol: m.symbol,
@@ -186,8 +197,10 @@ export const runBot = async () => {
           }
         });
         
-        console.log(`Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(top.length / batchSize)} (${batch.length} symbols)`);
+        // console.log(`Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(top.length / batchSize)} (${batch.length} symbols)`);
       }
+
+      console.log((Date.now() - startScan)/ 1000, "time taken to scan")
 
       // Get all open positions once (reuse for both position management and tradeSymbol)
       const allPositions = await getOpenPositionsBySymbol();
@@ -216,6 +229,8 @@ export const runBot = async () => {
         }
       }
 
+      console.log(symbolSignals.size, "symbolSignals size")
+
       for (const m of top) {
         const signalData = symbolSignals.get(m.symbol);
         const result = await tradeSymbol(m.symbol, signalData);
@@ -228,7 +243,21 @@ export const runBot = async () => {
       console.error('Bot loop error', err?.message || err);
       await telegram.notifyError(err, 'Bot loop');
     }
-    setTimeout(loop, 1000000);
+    
+    // Calculate elapsed time and schedule next loop
+    const elapsed = Date.now() - loopStart;
+    const oneMinute = 60 * 1000; // 1 minute in milliseconds
+    
+    if (elapsed < oneMinute) {
+      // If loop finished in less than 1 minute, wait for the remaining time
+      const waitTime = oneMinute - elapsed;
+      console.log(`Loop completed in ${(elapsed / 1000).toFixed(2)}s, waiting ${(waitTime / 1000).toFixed(2)}s before next loop`);
+      setTimeout(loop, waitTime);
+    } else {
+      // If loop took 1 minute or more, run immediately
+      console.log(`Loop completed in ${(elapsed / 1000).toFixed(2)}s (>= 1 minute), starting next loop immediately`);
+      setTimeout(loop, 0);
+    }
   };
 
   loop();
