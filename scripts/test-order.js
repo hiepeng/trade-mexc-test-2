@@ -69,7 +69,7 @@ async function testPlaceOrder() {
     const sizing = computeOrderSizing({ price });
     console.log(`📏 Calculated volume: ${sizing.vol} (based on $${config.positionSizeUsdt} position size)`);
 
-    // Calculate stop loss and take profit using computeStops (same as bot)
+    // Calculate stop loss using computeStops (same as bot)
     const signal = sideArg === 'LONG' ? SIGNAL.LONG : SIGNAL.SHORT;
     const stops = computeStops({ price, signal });
 
@@ -81,9 +81,6 @@ async function testPlaceOrder() {
     console.log(`   Volume: ${sizing.vol}`);
     console.log(`   Leverage: ${sizing.leverage}x`);
     console.log(`   Stop Loss: $${stops.stopLossPrice} (${(config.stopLossPct * 100).toFixed(2)}%)`);
-    console.log(
-      `   Take Profit: $${stops.takeProfitPrice} (${(config.takeProfitPct * 100).toFixed(2)}%)`
-    );
 
     console.log('\n🚀 Placing order...');
     // For MARKET orders, price is not needed (will use current market price)
@@ -93,8 +90,7 @@ async function testPlaceOrder() {
       type: 'MARKET',
       vol: sizing.vol,
       leverage: sizing.leverage,
-      stopLossPrice: stops.stopLossPrice,
-      takeProfitPrice: stops.takeProfitPrice
+      stopLossPrice: stops.stopLossPrice
       // Note: price is not passed for MARKET orders
     });
 

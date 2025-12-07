@@ -116,7 +116,10 @@ export const getOpenPositionsBySymbol = async () => {
           positionId: pos.positionId || pos.id,
           unrealizedPnl: 0, // Will be calculated below
           roi: 0, // Will be calculated below
-          maxRoi: null // Track maximum ROI reached (for trailing stop)
+          maxRoi: null, // Track maximum ROI reached (for trailing stop)
+          highestPrice: entryPrice, // Track highest price for LONG (for trailing stop)
+          lowestPrice: entryPrice, // Track lowest price for SHORT (for trailing stop)
+          trailingStopPrice: null // Current trailing stop price
         });
       }
     });
@@ -151,6 +154,17 @@ export const getOpenPositionsBySymbol = async () => {
       const currentPrice = currentPrices.get(symbol);
       if (currentPrice && position.entryPrice > 0 && position.marginUsed > 0) {
         try {
+          // Update highest/lowest price for trailing stop tracking
+          if (position.side === 'LONG') {
+            if (currentPrice > position.highestPrice) {
+              position.highestPrice = currentPrice;
+            }
+          } else if (position.side === 'SHORT') {
+            if (currentPrice < position.lowestPrice) {
+              position.lowestPrice = currentPrice;
+            }
+          }
+          
           // Calculate price change percentage
           let priceChangePct = 0;
           if (position.side === 'SHORT') {
@@ -168,6 +182,20 @@ export const getOpenPositionsBySymbol = async () => {
           
           // Calculate ROI: (PnL / Margin Used) × 100
           position.roi = position.marginUsed > 0 ? (position.unrealizedPnl / position.marginUsed) * 100 : 0;
+          
+          // Calculate trailing stop price
+          const signal = position.side === 'LONG' ? SIGNAL.LONG : SIGNAL.SHORT;
+          const newTrailingStop = calculateTrailingStop({
+            currentPrice,
+            signal,
+            highestPrice: position.highestPrice,
+            lowestPrice: position.lowestPrice
+          });
+          
+          // Update trailing stop price if new high/low reached
+          if (newTrailingStop !== null) {
+            position.trailingStopPrice = newTrailingStop;
+          }
         } catch (err) {
           console.error(`Error calculating PnL for ${symbol}:`, err?.message || err);
           // Fallback: use profitRatio if calculation fails
@@ -252,31 +280,6 @@ export const calculateTrailingStop = ({ currentPrice, signal, highestPrice, lowe
   return null;
 };
 
-// Calculate break even stop price (exported for use in position-monitor)
-export const calculateBreakEvenStop = ({ entryPrice, currentPrice, signal }) => {
-  if (!config.breakEvenProfitPct) {
-    return null;
-  }
-
-  if (signal === SIGNAL.LONG) {
-    const profitPct = (currentPrice - entryPrice) / entryPrice;
-    if (profitPct >= config.breakEvenProfitPct) {
-      // Price has reached break even threshold, set stop at entry
-      return Number(entryPrice.toFixed(6));
-    }
-  }
-
-  if (signal === SIGNAL.SHORT) {
-    const profitPct = (entryPrice - currentPrice) / entryPrice;
-    if (profitPct >= config.breakEvenProfitPct) {
-      // Price has reached break even threshold, set stop at entry
-      return Number(entryPrice.toFixed(6));
-    }
-  }
-
-  return null;
-};
-
 // Manage open positions: check for reverse signals, take profit
 export const manageOpenPositions = async (symbolSignals) => {
   const positions = await getOpenPositionsBySymbol();
@@ -294,28 +297,75 @@ export const manageOpenPositions = async (symbolSignals) => {
         position.maxRoi = position.roi;
       }
 
+      console.log(position, currentSignal, "position.side, currentSignal.signal")
+
       // 1. Check reverse signal
       if (shouldCloseOnReverseSignal(position.side, currentSignal.signal)) {
         console.log(
           `[${symbol}] Closing position due to reverse signal: ${position.side} -> ${currentSignal.signal}`
         );
-        await closePosition({
+       const resClose = await closePosition({
           symbol,
           side: position.side
         });
+        console.log(resClose, "resClose");
         await telegram.notifyPositionClosed(
           symbol,
           position.side,
           position.entryPrice,
           currentSignal.price,
           position.unrealizedPnl,
-          position.roi
+          position.roi,
+          `Reverse signal`
         );
         results.push({ symbol, action: 'CLOSED', reason: 'Reverse signal' });
         continue;
       }
 
-      // 2. Take Profit - Close when ROI is high and drops from max
+      // 2. Check Trailing Stop
+      const currentPrice = currentSignal.price;
+      let shouldCloseTrailingStop = false;
+      
+      console.log(position, "position");
+
+      if (config.trailingStopPct && position.trailingStopPrice !== null) {
+        if (position.side === 'LONG') {
+          // LONG: Close if price drops below trailing stop
+          if (currentPrice <= position.trailingStopPrice) {
+            shouldCloseTrailingStop = true;
+          }
+        } else if (position.side === 'SHORT') {
+          // SHORT: Close if price rises above trailing stop
+          if (currentPrice >= position.trailingStopPrice) {
+            shouldCloseTrailingStop = true;
+          }
+        }
+      }
+      
+      if (shouldCloseTrailingStop) {
+        console.log(
+          `[${symbol}] Trailing Stop triggered: Current Price $${currentPrice.toFixed(6)}, Trailing Stop $${position.trailingStopPrice.toFixed(6)}`
+        );
+        
+        const resClose = await closePosition({
+          symbol,
+          side: position.side
+        });
+        console.log(resClose, "resClose");
+        await telegram.notifyPositionClosed(
+          symbol,
+          position.side,
+          position.entryPrice,
+          currentPrice,
+          position.unrealizedPnl,
+          position.roi,
+          `Trailing Stop`
+        );
+        results.push({ symbol, action: 'CLOSED', reason: 'Trailing Stop' });
+        continue;
+      }
+
+      // 3. Take Profit - Close when ROI is high and drops from max
       // Logic from reference project: ROI >= 80% and drops 40% from max
       const enoughProfit = position.roi >= config.minProfitRoiForTrail;
       const droppedFromMax =
@@ -327,11 +377,11 @@ export const manageOpenPositions = async (symbolSignals) => {
           `[${symbol}] Take Profit triggered: ROI ${position.roi.toFixed(2)}%, Max ROI ${position.maxRoi.toFixed(2)}%, Drop ${(position.maxRoi - position.roi).toFixed(2)}%`
         );
         
-        await closePosition({
+        const resClose = await closePosition({
           symbol,
           side: position.side
         });
-        
+        console.log(resClose, "resClose");
         await telegram.notifyPositionClosed(
           symbol,
           position.side,
@@ -339,9 +389,9 @@ export const manageOpenPositions = async (symbolSignals) => {
           currentSignal.price,
           position.unrealizedPnl,
           position.roi,
-          `Take Profit (Trailing Stop)`
+          `Take Profit (ROI Trailing)`
         );
-        results.push({ symbol, action: 'CLOSED', reason: 'Take Profit (Trailing Stop)' });
+        results.push({ symbol, action: 'CLOSED', reason: 'Take Profit (ROI Trailing)' });
         continue;
       }
 

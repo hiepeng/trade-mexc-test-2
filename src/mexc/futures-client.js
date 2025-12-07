@@ -232,7 +232,6 @@ export const placeOrder = async ({
   leverage = config.leverage,
   openType = 'ISOLATED',
   stopLossPrice,
-  takeProfitPrice,
   positionId = 0 // For closing positions, pass positionId
 }) => {
   try {
@@ -254,20 +253,19 @@ export const placeOrder = async ({
       openType: openTypeInt,
       leverage,
       positionId, // 0 for new positions, actual positionId for closing
-      ...(stopLossPrice && { stopLossPrice }),
-      ...(takeProfitPrice && { takeProfitPrice })
+      ...(stopLossPrice && { stopLossPrice })
     };
     
-    // Use SDK client.submitOrder() like reference project
     console.log(orderParams, "orderParams")
     const orderResponse = await sdkClient.submitOrder(orderParams);
-    
+    console.log(orderResponse, "orderResponse")
+
     // Check response similar to reference project
     if (orderResponse && typeof orderResponse === 'object') {
-      const { success, code, message, msg } = orderResponse;
+      const { success, code, data } = orderResponse;
       if (success === false || (typeof code !== 'undefined' && code !== 0)) {
-        const errMsg = message || msg || 'MEXC rejected order';
-        throw new Error(`MEXC order rejected: code=${code}, message=${errMsg}`);
+        console.error(orderResponse)
+        throw new Error(`MEXC order rejected: code=${code}, message=${orderResponse}`);
       }
     }
     

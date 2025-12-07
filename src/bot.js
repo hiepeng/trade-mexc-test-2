@@ -46,7 +46,7 @@ const calculateSignal = async (symbol) => {
   }
 };
 
-const tradeSymbol = async (symbol, signalData = null, allPositions = null) => {
+const tradeSymbol = async (symbol, signalData = null) => {
   let signalResult = signalData;
   if (!signalResult) {
     signalResult = await calculateSignal(symbol);
@@ -75,7 +75,7 @@ const tradeSymbol = async (symbol, signalData = null, allPositions = null) => {
   // }
 
   // Use provided positions Map or fetch if not provided
-  const existingPositions = allPositions || await getOpenPositionsBySymbol();
+  const existingPositions = await getOpenPositionsBySymbol();
   const existingPosition = existingPositions.get(symbol);
   if (existingPosition) {
     await telegram.sendMessage(`${symbol} Position already exists: ${existingPosition.side}`)
@@ -114,10 +114,10 @@ const tradeSymbol = async (symbol, signalData = null, allPositions = null) => {
     // price,
     vol: config.positionSizeUsdt,
     leverage: config.leverage,
-    // ...stops
+    ...stops
   };
 
-  console.log(orderPayload, "orderPayload");
+console.log(orderPayload, "orderPayload")
 
   const res = await submitOrder(orderPayload);
 
@@ -128,8 +128,8 @@ const tradeSymbol = async (symbol, signalData = null, allPositions = null) => {
       side,
       orderPayload.type,
       price,
-      sizing.vol,
-      sizing.leverage,
+      config.positionSizeUsdt,
+      config.leverage,
       res.orderId
     );
   }
@@ -218,7 +218,7 @@ export const runBot = async () => {
 
       for (const m of top) {
         const signalData = symbolSignals.get(m.symbol);
-        const result = await tradeSymbol(m.symbol, signalData, allPositions);
+        const result = await tradeSymbol(m.symbol, signalData);
         // console.log(`[${m.symbol}]`, result);
       }
 

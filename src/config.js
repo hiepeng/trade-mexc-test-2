@@ -32,10 +32,8 @@ export const config = {
 
   // Risk Management
   stopLossPct: numberFromEnv('STOP_LOSS_PCT', 0.01), // Stop loss percentage (e.g., 0.01 = 1% loss from entry price)
-  takeProfitPct: numberFromEnv('TAKE_PROFIT_PCT', 0.02), // Take profit percentage (e.g., 0.02 = 2% profit from entry price)
   riskMaxOpenPositions: numberFromEnv('RISK_MAX_OPEN_POSITIONS', 3), // Maximum number of open positions allowed simultaneously
   trailingStopPct: numberFromEnv('TRAILING_STOP_PCT', 0.005), // Trailing stop percentage (e.g., 0.005 = 0.5% trailing distance)
-  breakEvenProfitPct: numberFromEnv('BREAK_EVEN_PROFIT_PCT', 0.01), // Profit percentage to activate break even (e.g., 0.01 = 1% profit)
   closeOnReverseSignal: numberFromEnv('CLOSE_ON_REVERSE_SIGNAL', 1) === 1, // Close position when opposite signal detected (1 = enabled, 0 = disabled)
   
   // Take Profit (from reference project)

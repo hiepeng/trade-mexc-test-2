@@ -11,8 +11,7 @@ export const submitOrder = async ({
   price,
   vol,
   leverage,
-  stopLossPrice,
-  takeProfitPrice
+  stopLossPrice
 }) => {
   try {
     const result = await placeFuturesOrder({
@@ -22,8 +21,7 @@ export const submitOrder = async ({
       price,
       vol,
       leverage,
-      stopLossPrice,
-      takeProfitPrice
+      stopLossPrice
     });
     return result;
   } catch (err) {
